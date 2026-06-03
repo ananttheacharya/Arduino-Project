@@ -7,6 +7,9 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 // Pin Definitions
 const int BTN_A = 2; // Nav / Play-Pause
 const int BTN_B = 8; // Next / Prev
+const int BTN_C = 6; // Custom / Extra
+const int BTN_D = 5; // Custom / Extra
+const int FLAME_SENSOR_PIN = 7; // Digital Out from Flame Sensor
 
 // Button State Tracking Structure
 struct Button {
@@ -19,6 +22,10 @@ struct Button {
 // Initialize buttons (starting state HIGH due to INPUT_PULLUP)
 Button btnA = {BTN_A, HIGH, 0, false};
 Button btnB = {BTN_B, HIGH, 0, false};
+Button btnC = {BTN_C, HIGH, 0, false};
+Button btnD = {BTN_D, HIGH, 0, false};
+
+bool flameDetected = false;
 
 // Timing constants for button presses
 const int LONG_PRESS_MS = 500;
@@ -47,6 +54,10 @@ void setup() {
   // Enable internal pull-up resistors (buttons read LOW when pressed)
   pinMode(BTN_A, INPUT_PULLUP);
   pinMode(BTN_B, INPUT_PULLUP);
+  pinMode(BTN_C, INPUT_PULLUP);
+  pinMode(BTN_D, INPUT_PULLUP);
+  
+  pinMode(FLAME_SENSOR_PIN, INPUT);
   
   // Initialize the LCD
   lcd.init();
@@ -73,7 +84,19 @@ void setup() {
 void loop() {
   readSerialData();
   handleButtons();
+  checkFlameSensor();
   updateDisplay();
+}
+
+void checkFlameSensor() {
+  // Flame sensors often read LOW when a flame is detected
+  int flameVal = digitalRead(FLAME_SENSOR_PIN);
+  if (flameVal == LOW && !flameDetected) {
+    flameDetected = true;
+    Serial.println("FLAME_DETECTED");
+  } else if (flameVal == HIGH && flameDetected) {
+    flameDetected = false;
+  }
 }
 
 // --- COMMUNICATION ---
@@ -152,9 +175,19 @@ void btnB_Long()  {
   Serial.println("PREV"); 
 }
 
+// Callbacks for Button C (Pin D6)
+void btnC_Short() { Serial.println("BTN_C_SHORT"); }
+void btnC_Long()  { Serial.println("BTN_C_LONG"); }
+
+// Callbacks for Button D (Pin D5)
+void btnD_Short() { Serial.println("BTN_D_SHORT"); }
+void btnD_Long()  { Serial.println("BTN_D_LONG"); }
+
 void handleButtons() {
   checkButton(btnA, btnA_Short, btnA_Long);
   checkButton(btnB, btnB_Short, btnB_Long);
+  checkButton(btnC, btnC_Short, btnC_Long);
+  checkButton(btnD, btnD_Short, btnD_Long);
 }
 
 // --- DISPLAY LOGIC ---

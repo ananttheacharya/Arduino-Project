@@ -10,6 +10,9 @@ import urllib.parse
 import json
 import threading
 import re
+import os
+import subprocess
+
 try:
     from unidecode import unidecode
 except ImportError:
@@ -120,97 +123,117 @@ def get_temp_gpu():
     output = f"C:{cpu_t_str}C G:{gpu_t_str}C"
     return output.ljust(16)
 
-async def get_spotify_async():
-    try:
-        sessions = await MediaManager.request_async()
-        current_session = sessions.get_current_session()
-        if current_session:
-            info = await current_session.try_get_media_properties_async()
-            timeline = current_session.get_timeline_properties()
-            pb = current_session.get_playback_info()
-            
-            song_id = f"{info.artist} - {info.title}" if info.artist and info.title else (info.title or "")
-            artist = info.artist
-            title = info.title
-            
-            pos = timeline.position.total_seconds()
-            end = timeline.end_time.total_seconds()
-            progress = int((pos / end) * 100) if end > 0 else 0
-            
-            return (song_id, artist, title, progress, pos)
-        return ("No music playing", "", "", 0, 0.0)
-    except Exception:
-        return ("Media error", "", "", 0, 0.0)
-
-def get_spotify():
-    # Helper to run the async Windows API call in our synchronous loop
-    return asyncio.run(get_spotify_async())
-
-
 def handle_commands():
     if arduino.in_waiting > 0:
         cmd = arduino.readline().decode('utf-8').strip()
         
-        # Uses pyautogui to simulate hitting media keys on a Windows keyboard
         if cmd == "PLAY_PAUSE":
             pyautogui.press('playpause')
         elif cmd == "NEXT":
             pyautogui.press('nexttrack')
         elif cmd == "PREV":
             pyautogui.press('prevtrack')
+        elif cmd == "FLAME_DETECTED":
+            try:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                mp3_path = os.path.join(script_dir, 'MKBAAG.mp3')
+                # Use Windows built-in MediaPlayer via hidden PowerShell (bypasses pygame audio routing issues)
+                ps_script = f"Add-Type -AssemblyName presentationCore; $player = New-Object System.Windows.Media.MediaPlayer; $player.Open('{mp3_path}'); $player.Play(); Start-Sleep -Seconds 30"
+                subprocess.Popen(["powershell", "-WindowStyle", "Hidden", "-Command", ps_script])
+                print(f"🔥 Flame detected! Playing audio via Windows native player...")
+            except Exception as e:
+                print(f"Error playing sound: {e}")
+        elif cmd == "BTN_C_SHORT":
+            print("Button C (D6) short press")
+        elif cmd == "BTN_C_LONG":
+            print("Button C (D6) long press")
+        elif cmd == "BTN_D_SHORT":
+            print("Button D (D5) short press")
+        elif cmd == "BTN_D_LONG":
+            print("Button D (D5) long press")
 
-last_sys_update = 0
-last_spotify_update = 0
-sys_line1 = get_cpu_ram()
-sys_line2 = get_temp_gpu()
-song_txt = "Waiting..."
-progress = 0
-
-print("Windows Dashboard link active. Press Ctrl+C to stop.")
-while True:
-    handle_commands()
+async def main():
+    global current_track_id, lyrics_data, current_lyric_text
     
-    current_time = time.time()
+    last_sys_update = 0
+    last_spotify_update = 0
+    sys_line1 = get_cpu_ram()
+    sys_line2 = get_temp_gpu()
+    song_txt = "Waiting..."
+    safe_song_txt = "Waiting..."
+    progress = 0
+    pos = 0.0
     
-    # 1. Fast loop for Spotify and Lyrics (10Hz)
-    if current_time - last_spotify_update > 0.1:
-        last_spotify_update = current_time
+    print("Windows Dashboard link active. Press Ctrl+C to stop.")
+    while True:
+        handle_commands()
         
-        song_id, artist, title, progress, pos = get_spotify()
+        current_time = time.time()
         
-        if song_id != current_track_id:
-            current_track_id = song_id
-            lyrics_data = []
-            current_lyric_text = ""
-            if artist and title:
-                threading.Thread(target=fetch_lyrics_bg, args=(artist, title)).start()
-
-        new_text = ""
-        if lyrics_data:
-            for t_sec, text in lyrics_data:
-                # 0.4s lookahead so the typewriter finishes right as the singer speaks
-                if (pos + 0.4) >= t_sec:
-                    new_text = text
-                else:
-                    break
-                    
-        if new_text != current_lyric_text:
-            current_lyric_text = new_text
-            # Romanize Hindi/Unicode characters to ASCII so the Arduino LCD can display them!
-            safe_lyric = unidecode(current_lyric_text)
-            arduino.write(f"<L|{safe_lyric}>\n".encode('utf-8'))
+        # 1. Fast loop for Timeline and Lyrics Sync (10Hz)
+        if current_time - last_spotify_update > 0.1:
+            last_spotify_update = current_time
             
-        song_txt = song_id if song_id else "No music playing"
-        safe_song_txt = unidecode(song_txt)
+            try:
+                sessions = await MediaManager.request_async()
+                current_session = sessions.get_current_session()
+                if current_session:
+                    timeline = current_session.get_timeline_properties()
+                    pos = timeline.position.total_seconds()
+                    end = timeline.end_time.total_seconds()
+                    progress = int((pos / end) * 100) if end > 0 else 0
+            except Exception:
+                pass
+                
+            new_text = ""
+            if lyrics_data:
+                for t_sec, text in lyrics_data:
+                    # 0.4s lookahead so the typewriter finishes right as the singer speaks
+                    if (pos + 0.4) >= t_sec:
+                        new_text = text
+                    else:
+                        break
+                        
+            if new_text != current_lyric_text:
+                current_lyric_text = new_text
+                safe_lyric = unidecode(current_lyric_text)
+                arduino.write(f"<L|{safe_lyric}>\n".encode('utf-8'))
+                
+        # 2. Slow loop for System Stats, Media Metadata, and main packet (1Hz)
+        if current_time - last_sys_update > 1.0: 
+            last_sys_update = current_time
+            
+            sys_line1 = get_cpu_ram()
+            sys_line2 = get_temp_gpu()
+            
+            try:
+                sessions = await MediaManager.request_async()
+                current_session = sessions.get_current_session()
+                if current_session:
+                    # wait_for prevents YouTube or Chrome from freezing the entire script if they hang
+                    info = await asyncio.wait_for(current_session.try_get_media_properties_async(), timeout=0.5)
+                    song_id = f"{info.artist} - {info.title}" if info.artist and info.title else (info.title or "")
+                    artist = info.artist
+                    title = info.title
+                else:
+                    song_id, artist, title = "No music playing", "", ""
+            except Exception:
+                song_id, artist, title = "Media error", "", ""
+                
+            if song_id != current_track_id and song_id != "Media error" and song_id != "No music playing":
+                current_track_id = song_id
+                lyrics_data = []
+                current_lyric_text = ""
+                if artist and title:
+                    threading.Thread(target=fetch_lyrics_bg, args=(artist, title)).start()
+                    
+            song_txt = song_id if song_id else "No music playing"
+            safe_song_txt = unidecode(song_txt)
+            
+            data_packet = f"<{sys_line1}|{sys_line2}|{safe_song_txt}|{progress}>\n"
+            arduino.write(data_packet.encode('utf-8'))
+            
+        await asyncio.sleep(0.05)
 
-    # 2. Slow loop for System Stats and main packet (1Hz)
-    if current_time - last_sys_update > 1.0: 
-        last_sys_update = current_time
-        
-        sys_line1 = get_cpu_ram()
-        sys_line2 = get_temp_gpu()
-        
-        data_packet = f"<{sys_line1}|{sys_line2}|{safe_song_txt}|{progress}>\n"
-        arduino.write(data_packet.encode('utf-8'))
-        
-    time.sleep(0.05)
+if __name__ == "__main__":
+    asyncio.run(main())
