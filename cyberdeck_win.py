@@ -5,6 +5,48 @@ import time
 import asyncio
 import pynvml
 import wmi
+import urllib.request
+import urllib.parse
+import json
+import threading
+
+current_track_id = ""
+lyrics_data = [] # List of tuples (time_in_seconds, text)
+current_lyric_text = ""
+
+def fetch_lyrics_bg(artist, title):
+    global lyrics_data
+    try:
+        url = "https://lrclib.net/api/search?q=" + urllib.parse.quote(f"{title} {artist}")
+        req = urllib.request.Request(url, headers={'User-Agent': 'Cyberdeck/1.0'})
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            for d in data:
+                if d.get('syncedLyrics'):
+                    parse_lrc(d.get('syncedLyrics'))
+                    return
+        lyrics_data = []
+    except:
+        lyrics_data = []
+
+def parse_lrc(lrc_str):
+    global lyrics_data
+    parsed = []
+    for line in lrc_str.split('\n'):
+        line = line.strip()
+        if line.startswith('[') and ']' in line:
+            time_part = line[1:line.find(']')]
+            text_part = line[line.find(']')+1:].strip()
+            try:
+                mins, secs = time_part.split(':')
+                total_sec = int(mins) * 60 + float(secs)
+                if text_part:
+                    parsed.append((total_sec, text_part))
+            except:
+                pass
+    parsed.sort(key=lambda x: x[0])
+    lyrics_data = parsed
+
 # CHANGED: We are using winrt now instead of winsdk to avoid the C++ build errors
 from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as MediaManager
 
@@ -74,16 +116,18 @@ async def get_spotify_async():
             timeline = current_session.get_timeline_properties()
             pb = current_session.get_playback_info()
             
-            song = f"{info.artist} - {info.title}" if info.artist and info.title else (info.title or "Unknown")
+            song_id = f"{info.artist} - {info.title}" if info.artist and info.title else (info.title or "")
+            artist = info.artist
+            title = info.title
             
             pos = timeline.position.total_seconds()
             end = timeline.end_time.total_seconds()
             progress = int((pos / end) * 100) if end > 0 else 0
             
-            return (song, progress)
-        return ("No music playing", 0)
+            return (song_id, artist, title, progress, pos)
+        return ("No music playing", "", "", 0, 0.0)
     except Exception:
-        return ("Media error", 0)
+        return ("Media error", "", "", 0, 0.0)
 
 def get_spotify():
     # Helper to run the async Windows API call in our synchronous loop
@@ -114,7 +158,31 @@ while True:
         
         sys_line1 = get_cpu_ram()
         sys_line2 = get_temp_gpu()
-        song_txt, progress = get_spotify()
+        song_id, artist, title, progress, pos = get_spotify()
+        
+        if song_id != current_track_id:
+            current_track_id = song_id
+            lyrics_data = []
+            current_lyric_text = ""
+            if artist and title:
+                threading.Thread(target=fetch_lyrics_bg, args=(artist, title)).start()
+
+        # Find active lyric
+        new_text = ""
+        if lyrics_data:
+            for t_sec, text in lyrics_data:
+                # 0.4s lookahead so the typewriter finishes right as the singer speaks
+                if (pos + 0.4) >= t_sec:
+                    new_text = text
+                else:
+                    break
+                    
+        if new_text != current_lyric_text:
+            current_lyric_text = new_text
+            arduino.write(f"<L|{current_lyric_text}>\n".encode('utf-8'))
+            time.sleep(0.05)
+            
+        song_txt = song_id if song_id else "No music playing"
         
         # Package the data and send it over COM3
         data_packet = f"<{sys_line1}|{sys_line2}|{song_txt}|{progress}>\n"

@@ -35,6 +35,11 @@ unsigned long lastScroll = 0;
 int scrollPos = 0;
 int progressPct = 0;
 
+// Variables for Lyrics
+String currentLyric = "";
+int typeIndex = 0;
+unsigned long lastTypeTime = 0;
+
 void setup() {
   // Start serial communication at 9600 baud rate
   Serial.begin(9600);
@@ -76,8 +81,12 @@ void readSerialData() {
   if (Serial.available() > 0) {
     String data = Serial.readStringUntil('\n');
     
-    // Parse the incoming packet: <SysLine1|SysLine2|SpotifyData|Progress|IsPlaying>
-    if (data.startsWith("<") && data.endsWith(">")) {
+    // Parse the incoming packet
+    if (data.startsWith("<L|") && data.endsWith(">")) {
+      currentLyric = data.substring(3, data.length() - 1);
+      typeIndex = 0;
+    }
+    else if (data.startsWith("<") && data.endsWith(">")) {
       data = data.substring(1, data.length() - 1); // Strip the < and >
       
       int p1 = data.indexOf('|');
@@ -124,9 +133,12 @@ void checkButton(Button &btn, void (*onShortPress)(), void (*onLongPress)()) {
 
 // Callbacks for Button A (Pin D2)
 void btnA_Short() {
-  currentScreen = !currentScreen; // Toggle between screen 0 and 1
+  currentScreen = (currentScreen + 1) % 3; // Toggle between screen 0, 1, 2
   lcd.clear();
   scrollPos = 0; // Reset scroll position when switching screens
+  if (currentScreen == 2) {
+    typeIndex = 0; // Restart typewriter on menu switch
+  }
 }
 void btnA_Long() { 
   Serial.println("PLAY_PAUSE"); 
@@ -190,6 +202,33 @@ void updateDisplay() {
       } else {
         lcd.print(" ");
       }
+    }
+  }
+  else if (currentScreen == 2) {
+    // --- MODE 2: LYRICS ---
+    if (millis() - lastTypeTime > 25) { 
+      lastTypeTime = millis();
+      if (typeIndex < currentLyric.length()) {
+        typeIndex++;
+      }
+    }
+    
+    int page = (typeIndex > 0) ? (typeIndex - 1) / 32 : 0;
+    int startIdx = page * 32;
+    int charsToShow = typeIndex - startIdx;
+    
+    String topRow = currentLyric.substring(startIdx, startIdx + min(charsToShow, 16));
+    lcd.setCursor(0, 0);
+    lcd.print(topRow);
+    for (int i=topRow.length(); i<16; i++) lcd.print(" ");
+    
+    lcd.setCursor(0, 1);
+    if (charsToShow > 16) {
+      String bottomRow = currentLyric.substring(startIdx + 16, startIdx + charsToShow);
+      lcd.print(bottomRow);
+      for (int i=bottomRow.length(); i<16; i++) lcd.print(" ");
+    } else {
+      lcd.print("                ");
     }
   }
 }
