@@ -34,7 +34,6 @@ String spotifyText = "Connecting...   ";
 unsigned long lastScroll = 0;
 int scrollPos = 0;
 int progressPct = 0;
-String remTime = "";
 
 void setup() {
   // Start serial communication at 9600 baud rate
@@ -84,14 +83,11 @@ void readSerialData() {
       int p1 = data.indexOf('|');
       int p2 = data.indexOf('|', p1 + 1);
       int p3 = data.indexOf('|', p2 + 1);
-      int p4 = data.indexOf('|', p3 + 1);
-      
-      if (p1 > 0 && p2 > 0 && p3 > 0 && p4 > 0) {
+      if (p1 > 0 && p2 > 0 && p3 > 0) {
         sysLine1 = data.substring(0, p1);
         sysLine2 = data.substring(p1 + 1, p2);
         spotifyText = data.substring(p2 + 1, p3);
-        progressPct = data.substring(p3 + 1, p4).toInt();
-        remTime = data.substring(p4 + 1);
+        progressPct = data.substring(p3 + 1).toInt();
       }
     }
   }
@@ -180,20 +176,13 @@ void updateDisplay() {
       }
     }
     
-    // Time remaining on bottom left
-    lcd.setCursor(0, 1);
-    // Pad remTime to exactly 5 chars if needed
-    String displayTime = remTime;
-    while(displayTime.length() < 5) displayTime += " ";
-    lcd.print(displayTime.substring(0, 5));
-    
-    // Progress bar on bottom row next to timer (11 chars wide, 5 sub-blocks per char = 55 total blocks)
-    int totalBlocks = (progressPct * 55) / 100;
+    // Progress bar on bottom row (16 chars wide, 5 sub-blocks per char = 80 total blocks)
+    int totalBlocks = (progressPct * 80) / 100;
     int fullBlocks = totalBlocks / 5;
     int partialBlock = totalBlocks % 5;
     
-    lcd.setCursor(5, 1);
-    for(int i=0; i<11; i++) {
+    lcd.setCursor(0, 1);
+    for(int i=0; i<16; i++) {
       if (i < fullBlocks) lcd.write((uint8_t)5);
       else if (i == fullBlocks) {
         if (partialBlock == 0) lcd.print(" ");

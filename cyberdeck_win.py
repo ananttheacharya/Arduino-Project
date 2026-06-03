@@ -80,14 +80,10 @@ async def get_spotify_async():
             end = timeline.end_time.total_seconds()
             progress = int((pos / end) * 100) if end > 0 else 0
             
-            rem_sec = int(end - pos) if end > pos else 0
-            m, s = divmod(rem_sec, 60)
-            rem_time = f"-{m}:{s:02d}"
-            
-            return (song, progress, rem_time)
-        return ("No music playing", 0, 0)
+            return (song, progress)
+        return ("No music playing", 0)
     except Exception:
-        return ("Media error", 0, 0)
+        return ("Media error", 0)
 
 def get_spotify():
     # Helper to run the async Windows API call in our synchronous loop
@@ -118,10 +114,10 @@ while True:
         
         sys_line1 = get_cpu_ram()
         sys_line2 = get_temp_gpu()
-        song_txt, progress, rem_time = get_spotify()
+        song_txt, progress = get_spotify()
         
         # Package the data and send it over COM3
-        data_packet = f"<{sys_line1}|{sys_line2}|{song_txt}|{progress}|{rem_time}>\n"
+        data_packet = f"<{sys_line1}|{sys_line2}|{song_txt}|{progress}>\n"
         arduino.write(data_packet.encode('utf-8'))
         
     time.sleep(0.05)
