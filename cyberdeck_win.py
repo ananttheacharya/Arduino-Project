@@ -146,18 +146,23 @@ def handle_commands():
         elif cmd == "PREV":
             pyautogui.press('prevtrack')
 
-last_update = 0
+last_sys_update = 0
+last_spotify_update = 0
+sys_line1 = get_cpu_ram()
+sys_line2 = get_temp_gpu()
+song_txt = "Waiting..."
+progress = 0
 
 print("Windows Dashboard link active. Press Ctrl+C to stop.")
 while True:
     handle_commands()
     
     current_time = time.time()
-    if current_time - last_update > 1.0: # Send data to LCD every 1 second
-        last_update = current_time
+    
+    # 1. Fast loop for Spotify and Lyrics (10Hz)
+    if current_time - last_spotify_update > 0.1:
+        last_spotify_update = current_time
         
-        sys_line1 = get_cpu_ram()
-        sys_line2 = get_temp_gpu()
         song_id, artist, title, progress, pos = get_spotify()
         
         if song_id != current_track_id:
@@ -167,7 +172,6 @@ while True:
             if artist and title:
                 threading.Thread(target=fetch_lyrics_bg, args=(artist, title)).start()
 
-        # Find active lyric
         new_text = ""
         if lyrics_data:
             for t_sec, text in lyrics_data:
@@ -180,11 +184,16 @@ while True:
         if new_text != current_lyric_text:
             current_lyric_text = new_text
             arduino.write(f"<L|{current_lyric_text}>\n".encode('utf-8'))
-            time.sleep(0.05)
             
         song_txt = song_id if song_id else "No music playing"
+
+    # 2. Slow loop for System Stats and main packet (1Hz)
+    if current_time - last_sys_update > 1.0: 
+        last_sys_update = current_time
         
-        # Package the data and send it over COM3
+        sys_line1 = get_cpu_ram()
+        sys_line2 = get_temp_gpu()
+        
         data_packet = f"<{sys_line1}|{sys_line2}|{song_txt}|{progress}>\n"
         arduino.write(data_packet.encode('utf-8'))
         
