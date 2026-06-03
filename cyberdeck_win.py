@@ -1,0 +1,79 @@
+import serial
+import psutil
+import pyautogui
+import time
+import asyncio
+
+# CHANGED: We are using winrt now instead of winsdk to avoid the C++ build errors
+from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as MediaManager
+
+# Updated for Windows
+SERIAL_PORT = 'COM3' 
+BAUD_RATE = 9600
+
+try:
+    arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
+    time.sleep(2) # Wait for Arduino to initialize
+    print(f"Successfully connected to {SERIAL_PORT}")
+except Exception as e:
+    print(f"Failed to connect to {SERIAL_PORT}: {e}")
+    print("Make sure the Arduino IDE Serial Monitor is CLOSED.")
+    exit(1)
+
+def get_cpu_ram():
+    cpu = psutil.cpu_percent(interval=None)
+    ram = psutil.virtual_memory().percent
+    return f"CPU:{int(cpu)}% RAM:{int(ram)}%".ljust(16)
+
+def get_temp_gpu():
+    # Placeholder for temps/GPU to avoid Windows admin permission crashes
+    return "T:--C  GPU:--%  ".ljust(16)
+
+async def get_spotify_async():
+    try:
+        sessions = await MediaManager.request_async()
+        current_session = sessions.get_current_session()
+        if current_session:
+            info = await current_session.try_get_media_properties_async()
+            # Format: Artist - Title
+            song = f"{info.artist} - {info.title}"
+            return song + " " * 4 
+        return "No music playing  "
+    except Exception:
+        return "Media error       "
+
+def get_spotify():
+    # Helper to run the async Windows API call in our synchronous loop
+    return asyncio.run(get_spotify_async())
+
+def handle_commands():
+    if arduino.in_waiting > 0:
+        cmd = arduino.readline().decode('utf-8').strip()
+        
+        # Uses pyautogui to simulate hitting media keys on a Windows keyboard
+        if cmd == "PLAY_PAUSE":
+            pyautogui.press('playpause')
+        elif cmd == "NEXT":
+            pyautogui.press('nexttrack')
+        elif cmd == "PREV":
+            pyautogui.press('prevtrack')
+
+last_update = 0
+
+print("Windows Dashboard link active. Press Ctrl+C to stop.")
+while True:
+    handle_commands()
+    
+    current_time = time.time()
+    if current_time - last_update > 1.0: # Send data to LCD every 1 second
+        last_update = current_time
+        
+        sys_line1 = get_cpu_ram()
+        sys_line2 = get_temp_gpu()
+        spotify_txt = get_spotify()
+        
+        # Package the data and send it over COM3
+        data_packet = f"<{sys_line1}|{sys_line2}|{spotify_txt}>\n"
+        arduino.write(data_packet.encode('utf-8'))
+        
+    time.sleep(0.05)
