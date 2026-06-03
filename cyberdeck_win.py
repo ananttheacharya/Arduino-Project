@@ -22,42 +22,25 @@ lyrics_data = [] # List of tuples (time_in_seconds, text)
 current_lyric_text = ""
 
 def clean_title(title):
-    # Remove anything after a dash or in parentheses (like "feat." or "Remastered")
-    t = re.sub(r'\(.*?\)', '', title)
-    t = t.split('-')[0]
-    return t.strip()
+    # Just a simple string split to remove " - Remastered" etc.
+    return title.split('-')[0].strip()
 
 def fetch_lyrics_bg(artist, title):
     global lyrics_data
-    queries = [
-        f"{title} {artist}",
-        f"{clean_title(title)} {artist}",
-        f"{clean_title(title)}"
-    ]
-    
-    for q in queries:
-        try:
-            url = "https://lrclib.net/api/search?q=" + urllib.parse.quote(q)
-            req = urllib.request.Request(url, headers={'User-Agent': 'Cyberdeck/1.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode())
-                
-                # Try to find a match that has synced lyrics and matching artist
-                for d in data:
-                    if d.get('syncedLyrics') and (artist.lower() in (d.get('artistName') or "").lower()):
-                        parse_lrc(d.get('syncedLyrics'))
-                        return
-                        
-                # If we are on the final fallback query, just take the first synced lyric we find
-                if q == queries[-1]:
-                    for d in data:
-                        if d.get('syncedLyrics'):
-                            parse_lrc(d.get('syncedLyrics'))
-                            return
-        except Exception:
-            pass
-            
-    lyrics_data = []
+    # Use one single query to avoid getting rate-limited or timing out
+    q = f"{clean_title(title)} {artist}"
+    try:
+        url = "https://lrclib.net/api/search?q=" + urllib.parse.quote(q)
+        req = urllib.request.Request(url, headers={'User-Agent': 'Cyberdeck/1.0'})
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            for d in data:
+                if d.get('syncedLyrics'):
+                    parse_lrc(d.get('syncedLyrics'))
+                    return
+        lyrics_data = []
+    except Exception:
+        lyrics_data = []
 
 def parse_lrc(lrc_str):
     global lyrics_data
