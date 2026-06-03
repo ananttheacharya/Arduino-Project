@@ -3,7 +3,8 @@ import psutil
 import pyautogui
 import time
 import asyncio
-
+import pynvml
+import wmi
 # CHANGED: We are using winrt now instead of winsdk to avoid the C++ build errors
 from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as MediaManager
 
@@ -25,9 +26,44 @@ def get_cpu_ram():
     ram = psutil.virtual_memory().percent
     return f"CPU:{int(cpu)}% RAM:{int(ram)}%".ljust(16)
 
+try:
+    pynvml.nvmlInit()
+    nvml_inited = True
+except:
+    nvml_inited = False
+
+wmi_w = None
+wmi_access_denied = False
+try:
+    wmi_w = wmi.WMI(namespace="root\\wmi")
+    # Test read to check for admin privileges
+    _ = wmi_w.MSAcpi_ThermalZoneTemperature()
+except:
+    wmi_access_denied = True
+
 def get_temp_gpu():
-    # Placeholder for temps/GPU to avoid Windows admin permission crashes
-    return "T:--C  GPU:--%  ".ljust(16)
+    cpu_t_str = "--"
+    if not wmi_access_denied and wmi_w is not None:
+        try:
+            temps = wmi_w.MSAcpi_ThermalZoneTemperature()
+            if temps:
+                cpu_t = int((temps[0].CurrentTemperature / 10.0) - 273.15)
+                cpu_t_str = str(cpu_t)
+        except:
+            pass
+
+    gpu_t_str = "--"
+    if nvml_inited:
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            gpu_t = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            gpu_t_str = str(gpu_t)
+        except:
+            pass
+            
+    # Format to fit the 16 character width limit on the LCD
+    output = f"C:{cpu_t_str}C G:{gpu_t_str}C"
+    return output.ljust(16)
 
 async def get_spotify_async():
     try:
@@ -35,16 +71,28 @@ async def get_spotify_async():
         current_session = sessions.get_current_session()
         if current_session:
             info = await current_session.try_get_media_properties_async()
-            # Format: Artist - Title
-            song = f"{info.artist} - {info.title}"
-            return song + " " * 4 
-        return "No music playing  "
+            timeline = current_session.get_timeline_properties()
+            pb = current_session.get_playback_info()
+            
+            song = f"{info.artist} - {info.title}" if info.artist and info.title else (info.title or "Unknown")
+            
+            pos = timeline.position.total_seconds()
+            end = timeline.end_time.total_seconds()
+            progress = int((pos / end) * 100) if end > 0 else 0
+            
+            rem_sec = int(end - pos) if end > pos else 0
+            m, s = divmod(rem_sec, 60)
+            rem_time = f"-{m}:{s:02d}"
+            
+            return (song, progress, rem_time)
+        return ("No music playing", 0, 0)
     except Exception:
-        return "Media error       "
+        return ("Media error", 0, 0)
 
 def get_spotify():
     # Helper to run the async Windows API call in our synchronous loop
     return asyncio.run(get_spotify_async())
+
 
 def handle_commands():
     if arduino.in_waiting > 0:
@@ -70,10 +118,10 @@ while True:
         
         sys_line1 = get_cpu_ram()
         sys_line2 = get_temp_gpu()
-        spotify_txt = get_spotify()
+        song_txt, progress, rem_time = get_spotify()
         
         # Package the data and send it over COM3
-        data_packet = f"<{sys_line1}|{sys_line2}|{spotify_txt}>\n"
+        data_packet = f"<{sys_line1}|{sys_line2}|{song_txt}|{progress}|{rem_time}>\n"
         arduino.write(data_packet.encode('utf-8'))
         
     time.sleep(0.05)

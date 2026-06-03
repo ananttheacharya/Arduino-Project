@@ -1,4 +1,4 @@
-#include <Wire.h>
+ #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
 // Set your LCD address (0x27 and 0x3F are the most common)
@@ -33,6 +33,8 @@ String spotifyText = "Connecting...   ";
 // Scrolling Variables for Spotify
 unsigned long lastScroll = 0;
 int scrollPos = 0;
+int progressPct = 0;
+String remTime = "";
 
 void setup() {
   // Start serial communication at 9600 baud rate
@@ -45,6 +47,19 @@ void setup() {
   // Initialize the LCD
   lcd.init();
   lcd.backlight();
+  
+  // Custom characters for progress bar
+  byte p1[8] = {0x10,0x10,0x10,0x10,0x10,0x10,0x10,0x10};
+  byte p2[8] = {0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x18};
+  byte p3[8] = {0x1C,0x1C,0x1C,0x1C,0x1C,0x1C,0x1C,0x1C};
+  byte p4[8] = {0x1E,0x1E,0x1E,0x1E,0x1E,0x1E,0x1E,0x1E};
+  byte p5[8] = {0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F};
+  lcd.createChar(1, p1);
+  lcd.createChar(2, p2);
+  lcd.createChar(3, p3);
+  lcd.createChar(4, p4);
+  lcd.createChar(5, p5);
+
   lcd.setCursor(0, 0);
   lcd.print("CYBERDECK INIT");
   delay(1500);
@@ -62,17 +77,21 @@ void readSerialData() {
   if (Serial.available() > 0) {
     String data = Serial.readStringUntil('\n');
     
-    // Parse the incoming packet: <SysLine1|SysLine2|SpotifyData>
+    // Parse the incoming packet: <SysLine1|SysLine2|SpotifyData|Progress|IsPlaying>
     if (data.startsWith("<") && data.endsWith(">")) {
       data = data.substring(1, data.length() - 1); // Strip the < and >
       
-      int firstPipe = data.indexOf('|');
-      int secondPipe = data.indexOf('|', firstPipe + 1);
+      int p1 = data.indexOf('|');
+      int p2 = data.indexOf('|', p1 + 1);
+      int p3 = data.indexOf('|', p2 + 1);
+      int p4 = data.indexOf('|', p3 + 1);
       
-      if (firstPipe > 0 && secondPipe > 0) {
-        sysLine1 = data.substring(0, firstPipe);
-        sysLine2 = data.substring(firstPipe + 1, secondPipe);
-        spotifyText = data.substring(secondPipe + 1);
+      if (p1 > 0 && p2 > 0 && p3 > 0 && p4 > 0) {
+        sysLine1 = data.substring(0, p1);
+        sysLine2 = data.substring(p1 + 1, p2);
+        spotifyText = data.substring(p2 + 1, p3);
+        progressPct = data.substring(p3 + 1, p4).toInt();
+        remTime = data.substring(p4 + 1);
       }
     }
   }
@@ -141,25 +160,46 @@ void updateDisplay() {
   } 
   else if (currentScreen == 1) {
     // --- MODE 1: SPOTIFY ---
-    lcd.setCursor(0, 0);
-    lcd.print("NOW PLAYING:    ");
-    
-    // Scrolling logic for song names longer than 16 characters
+    // Spinning disc animation removed - scrolling on full 16 columns
     if (millis() - lastScroll > 400) { // 400ms scroll speed
       lastScroll = millis();
       
-      lcd.setCursor(0, 1);
+      lcd.setCursor(0, 0); // Name on top row now
       if (spotifyText.length() <= 16) {
         lcd.print(spotifyText);
+        for(int i=spotifyText.length(); i<16; i++) lcd.print(" ");
       } else {
-        // Create a circular string and grab a 16-character window
-        String displayStr = spotifyText.substring(scrollPos) + spotifyText.substring(0, scrollPos);
+        // Create a circular string with spacing
+        String displayStr = spotifyText.substring(scrollPos) + "   " + spotifyText.substring(0, scrollPos);
         lcd.print(displayStr.substring(0, 16));
         
         scrollPos++;
-        if (scrollPos >= spotifyText.length()) {
+        if (scrollPos >= spotifyText.length() + 3) {
           scrollPos = 0;
         }
+      }
+    }
+    
+    // Time remaining on bottom left
+    lcd.setCursor(0, 1);
+    // Pad remTime to exactly 5 chars if needed
+    String displayTime = remTime;
+    while(displayTime.length() < 5) displayTime += " ";
+    lcd.print(displayTime.substring(0, 5));
+    
+    // Progress bar on bottom row next to timer (11 chars wide, 5 sub-blocks per char = 55 total blocks)
+    int totalBlocks = (progressPct * 55) / 100;
+    int fullBlocks = totalBlocks / 5;
+    int partialBlock = totalBlocks % 5;
+    
+    lcd.setCursor(5, 1);
+    for(int i=0; i<11; i++) {
+      if (i < fullBlocks) lcd.write((uint8_t)5);
+      else if (i == fullBlocks) {
+        if (partialBlock == 0) lcd.print(" ");
+        else lcd.write((uint8_t)partialBlock);
+      } else {
+        lcd.print(" ");
       }
     }
   }
