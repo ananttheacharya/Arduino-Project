@@ -9,25 +9,55 @@ import urllib.request
 import urllib.parse
 import json
 import threading
+import re
+try:
+    from unidecode import unidecode
+except ImportError:
+    # Fallback if the user hasn't installed unidecode
+    def unidecode(text):
+        return text.encode('ascii', 'ignore').decode('ascii')
 
 current_track_id = ""
 lyrics_data = [] # List of tuples (time_in_seconds, text)
 current_lyric_text = ""
 
+def clean_title(title):
+    # Remove anything after a dash or in parentheses (like "feat." or "Remastered")
+    t = re.sub(r'\(.*?\)', '', title)
+    t = t.split('-')[0]
+    return t.strip()
+
 def fetch_lyrics_bg(artist, title):
     global lyrics_data
-    try:
-        url = "https://lrclib.net/api/search?q=" + urllib.parse.quote(f"{title} {artist}")
-        req = urllib.request.Request(url, headers={'User-Agent': 'Cyberdeck/1.0'})
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode())
-            for d in data:
-                if d.get('syncedLyrics'):
-                    parse_lrc(d.get('syncedLyrics'))
-                    return
-        lyrics_data = []
-    except:
-        lyrics_data = []
+    queries = [
+        f"{title} {artist}",
+        f"{clean_title(title)} {artist}",
+        f"{clean_title(title)}"
+    ]
+    
+    for q in queries:
+        try:
+            url = "https://lrclib.net/api/search?q=" + urllib.parse.quote(q)
+            req = urllib.request.Request(url, headers={'User-Agent': 'Cyberdeck/1.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                
+                # Try to find a match that has synced lyrics and matching artist
+                for d in data:
+                    if d.get('syncedLyrics') and (artist.lower() in (d.get('artistName') or "").lower()):
+                        parse_lrc(d.get('syncedLyrics'))
+                        return
+                        
+                # If we are on the final fallback query, just take the first synced lyric we find
+                if q == queries[-1]:
+                    for d in data:
+                        if d.get('syncedLyrics'):
+                            parse_lrc(d.get('syncedLyrics'))
+                            return
+        except Exception:
+            pass
+            
+    lyrics_data = []
 
 def parse_lrc(lrc_str):
     global lyrics_data
@@ -183,9 +213,12 @@ while True:
                     
         if new_text != current_lyric_text:
             current_lyric_text = new_text
-            arduino.write(f"<L|{current_lyric_text}>\n".encode('utf-8'))
+            # Romanize Hindi/Unicode characters to ASCII so the Arduino LCD can display them!
+            safe_lyric = unidecode(current_lyric_text)
+            arduino.write(f"<L|{safe_lyric}>\n".encode('utf-8'))
             
         song_txt = song_id if song_id else "No music playing"
+        safe_song_txt = unidecode(song_txt)
 
     # 2. Slow loop for System Stats and main packet (1Hz)
     if current_time - last_sys_update > 1.0: 
@@ -194,7 +227,7 @@ while True:
         sys_line1 = get_cpu_ram()
         sys_line2 = get_temp_gpu()
         
-        data_packet = f"<{sys_line1}|{sys_line2}|{song_txt}|{progress}>\n"
+        data_packet = f"<{sys_line1}|{sys_line2}|{safe_song_txt}|{progress}>\n"
         arduino.write(data_packet.encode('utf-8'))
         
     time.sleep(0.05)
