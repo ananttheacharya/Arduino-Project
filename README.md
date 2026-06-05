@@ -1,4 +1,4 @@
-# 🖥️ Cyberdeck V3 — The "Why Did I Do This To An Arduino" Edition
+# 🖥️ Cyberdeck V3 — The "Why did my Arduino deserve this??" Edition
 
 Welcome to the **Cyberdeck**, an over-engineered, unnecessarily complex **always-on desktop companion** and **offline arcade machine** powered by an **Arduino Uno** and a humble **16×2 I²C LCD**. It runs off 2KB of RAM. 
 
