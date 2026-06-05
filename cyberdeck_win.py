@@ -12,6 +12,10 @@ import threading
 import re
 import os
 import subprocess
+import html
+import random
+
+serial_lock = threading.Lock()
 
 try:
     from unidecode import unidecode
@@ -71,13 +75,56 @@ SERIAL_PORT = 'COM3'
 BAUD_RATE = 9600
 
 try:
-    arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
-    time.sleep(2) # Wait for Arduino to initialize
+    arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1, write_timeout=2.0)
+    time.sleep(4) # Wait for Arduino to initialize (bootloader + setup delay)
     print(f"Successfully connected to {SERIAL_PORT}")
 except Exception as e:
     print(f"Failed to connect to {SERIAL_PORT}: {e}")
     print("Make sure the Arduino IDE Serial Monitor is CLOSED.")
     exit(1)
+
+def fetch_trivia():
+    try:
+        url = "https://opentdb.com/api.php?amount=10&difficulty=medium&type=multiple"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Cyberdeck/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            results = data.get("results", [])
+    except Exception as e:
+        print(f"Network error ({e}). Using offline fallback trivia!")
+        results = [
+            {"question": "What is the capital of France?", "correct_answer": "Paris", "incorrect_answers": ["London", "Berlin", "Rome"]},
+            {"question": "Which planet is known as the Red Planet?", "correct_answer": "Mars", "incorrect_answers": ["Venus", "Jupiter", "Saturn"]},
+            {"question": "What is the largest mammal?", "correct_answer": "Blue Whale", "incorrect_answers": ["Elephant", "Giraffe", "Orca"]},
+            {"question": "Who painted the Mona Lisa?", "correct_answer": "Da Vinci", "incorrect_answers": ["Van Gogh", "Picasso", "Monet"]},
+            {"question": "What is the chemical symbol for Gold?", "correct_answer": "Au", "incorrect_answers": ["Ag", "Fe", "Cu"]},
+            {"question": "Which language is most spoken worldwide?", "correct_answer": "Mandarin", "incorrect_answers": ["English", "Spanish", "Hindi"]},
+            {"question": "How many continents are there?", "correct_answer": "7", "incorrect_answers": ["5", "6", "8"]},
+            {"question": "What gas do plants absorb?", "correct_answer": "CO2", "incorrect_answers": ["Oxygen", "Nitrogen", "Helium"]},
+            {"question": "Who wrote 'Hamlet'?", "correct_answer": "Shakespeare", "incorrect_answers": ["Dickens", "Homer", "Tolkien"]},
+            {"question": "What is the square root of 144?", "correct_answer": "12", "incorrect_answers": ["10", "14", "16"]}
+        ]
+
+    try:
+        for idx, q in enumerate(results):
+            question = html.unescape(q["question"])[:44]
+            correct_ans = html.unescape(q["correct_answer"])[:9]
+            incorrect = [html.unescape(x)[:9] for x in q["incorrect_answers"]]
+            
+            options = incorrect + [correct_ans]
+            random.shuffle(options)
+            correct_idx = options.index(correct_ans)
+            
+            q_text = unidecode(question)
+            opts = [unidecode(opt) for opt in options]
+            
+            packet = f"<Q|{idx}|{q_text}|{opts[0]}|{opts[1]}|{opts[2]}|{opts[3]}|{correct_idx}>\n"
+            with serial_lock:
+                arduino.write(packet.encode('utf-8'))
+            time.sleep(0.4) # Give Arduino 300ms+ to complete EEPROM write
+        print("Trivia synced to EEPROM successfully!")
+    except Exception as e:
+        print("Failed to sync trivia:", e)
 
 def get_cpu_ram():
     cpu = psutil.cpu_percent(interval=None)
@@ -164,6 +211,9 @@ async def main():
     progress = 0
     pos = 0.0
     
+    # Sync trivia questions to Arduino on startup
+    threading.Thread(target=fetch_trivia, daemon=True).start()
+    
     print("Windows Dashboard link active. Press Ctrl+C to stop.")
     while True:
         handle_commands()
@@ -197,7 +247,8 @@ async def main():
             if new_text != current_lyric_text:
                 current_lyric_text = new_text
                 safe_lyric = unidecode(current_lyric_text)
-                arduino.write(f"<L|{safe_lyric}>\n".encode('utf-8'))
+                with serial_lock:
+                    arduino.write(f"<L|{safe_lyric}>\n".encode('utf-8'))
                 
         # 2. Slow loop for System Stats, Media Metadata, and main packet (1Hz)
         if current_time - last_sys_update > 1.0: 
@@ -231,7 +282,8 @@ async def main():
             safe_song_txt = unidecode(song_txt)
             
             data_packet = f"<{sys_line1}|{sys_line2}|{safe_song_txt}|{progress}>\n"
-            arduino.write(data_packet.encode('utf-8'))
+            with serial_lock:
+                arduino.write(data_packet.encode('utf-8'))
             
         await asyncio.sleep(0.05)
 
