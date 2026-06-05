@@ -18,7 +18,7 @@ Because loving yourself is cringe.
 | **Wall-E Eyes** | PC `🔌` / Batt `🔋` | Ambient blinking robot eyes that judge you and periodically tell you to "Drink Water" or "Fix Posture". |
 | **Cyber Runner** | Batt `🔋` | The Chrome Dino game, but cooler. Sub-grid pixel rendering completely eliminates LCD ghosting. |
 | **Simon Says** | Batt `🔋` | Memorize the sequence. Mess up and the Arduino laughs at your score. |
-| **Trivia Master** | Batt `🔋` | 10 multiple-choice trivia questions synced from the web to the Arduino's EEPROM. Includes Lifelines! |
+| **KAUN BANEGA CROREPATII** | Batt `🔋` | 10 multiple-choice trivia questions synced from the web to the Arduino's EEPROM. Includes Lifelines! |
 | **🔥 Flame Alert** | ANY | A literal flame sensor that triggers a Windows PowerShell script to blast an MP3 alarm if your desk catches fire. |
 
 ---
