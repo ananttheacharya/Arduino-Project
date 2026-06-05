@@ -161,7 +161,7 @@ struct TriviaQuestion {
 }; // 86 bytes
 
 int triviaIdx = 0;
-int triviaState = 0; // 0=Q, 1=Opt AB, 2=Opt CD, 3=Lifeline, 4=Result
+int triviaState = 0; // 0=Answering, 3=Lifeline, 4=Result Next, 5=Result Back
 unsigned long triviaScrollTime = 0;
 int triviaScrollPos = 0;
 TriviaQuestion curQ;
@@ -171,6 +171,9 @@ int lifelineCursor = 0;
 String triviaMessage = "";
 unsigned long triviaMessageTime = 0;
 int totalTriviaStored = 0;
+
+int triviaOptCursor = 0;
+bool triviaNeedsUpdate = true;
 
 void loadQuestionFromEEPROM(int index) {
   int addr = index * sizeof(TriviaQuestion);
@@ -187,6 +190,8 @@ void loadQuestionFromEEPROM(int index) {
   for(int i=0; i<4; i++) optionHidden[i] = false;
   triviaState = 0;
   triviaScrollPos = 0;
+  triviaOptCursor = 0;
+  triviaNeedsUpdate = true;
 }
 
 // Ambient Eyes
@@ -430,24 +435,33 @@ void doTriviaPhone() {
 void handleTriviaButton(int btnIdx) {
   if(totalTriviaStored == 0) return;
   
-  if (triviaState == 0 || triviaState == 1 || triviaState == 2) {
+  if (triviaState == 0) {
     if (btnIdx == 2) { // D6 pressed -> Lifelines
       triviaState = 3;
       lifelineCursor = 0;
+      triviaNeedsUpdate = true;
       lcd.clear();
       return;
     }
     
     // Answering
-    if (btnIdx == 0) triviaState = 1; // Toggle AB
-    if (btnIdx == 1) triviaState = 2; // Toggle CD
-    
-    // Guessing (D5 = Submit if Option is selected, but D5 is D, D8 is B...)
-    // Wait, D2=A, D8=B, D6=C, D5=D.
-    // If we map buttons to options directly:
-    if (!optionHidden[btnIdx]) {
+    if (btnIdx == 3) { // D5 (Left)
+      for(int i=0; i<4; i++) {
+        triviaOptCursor = (triviaOptCursor + 3) % 4; // -1 % 4
+        if (!optionHidden[triviaOptCursor]) break;
+      }
+      triviaNeedsUpdate = true;
+    }
+    else if (btnIdx == 1) { // D8 (Right)
+      for(int i=0; i<4; i++) {
+        triviaOptCursor = (triviaOptCursor + 1) % 4;
+        if (!optionHidden[triviaOptCursor]) break;
+      }
+      triviaNeedsUpdate = true;
+    }
+    else if (btnIdx == 0) { // D2 (Confirm)
       lcd.clear();
-      if (btnIdx == curQ.correct) {
+      if (triviaOptCursor == curQ.correct) {
         lcd.print(F("CORRECT!"));
         runnerScore++; // Use runnerScore for trivia score
       } else {
@@ -460,15 +474,21 @@ void handleTriviaButton(int btnIdx) {
   } 
   else if (triviaState == 3) {
     // Lifeline Menu
-    if (btnIdx == 0) lifelineCursor = (lifelineCursor + 1) % 3; // D2 cycles
-    else if (btnIdx == 1) { // D8 Selects
+    if (btnIdx == 3) { // D5 (Left)
+       lifelineCursor = (lifelineCursor + 2) % 3;
+       triviaNeedsUpdate = true;
+    }
+    else if (btnIdx == 1) { // D8 (Right)
+       lifelineCursor = (lifelineCursor + 1) % 3;
+       triviaNeedsUpdate = true;
+    }
+    else if (btnIdx == 0) { // D2 (Confirm)
       if (!lifelineUsed[lifelineCursor]) {
         lifelineUsed[lifelineCursor] = true;
         triviaState = 5; // Show message
         triviaMessageTime = millis();
-        if (lifelineCursor == 0) { // Phone
-          doTriviaPhone();
-        } else if (lifelineCursor == 1) { // Audience
+        if (lifelineCursor == 0) doTriviaPhone();
+        else if (lifelineCursor == 1) { // Audience
           if (random(0,100) < 1) {
             int wrong = (curQ.correct + 1) % 4;
             triviaMessage = String((char)('A' + wrong)) + F(" has 82% votes");
@@ -483,7 +503,6 @@ void handleTriviaButton(int btnIdx) {
               hidden++;
             }
           }
-          // fallback if RNG didn't hide 2
           for(int i=0; i<4 && hidden<2; i++) {
              if (i != curQ.correct && !optionHidden[i]) { optionHidden[i] = true; hidden++; }
           }
@@ -491,8 +510,9 @@ void handleTriviaButton(int btnIdx) {
         }
       }
     }
-    else if (btnIdx == 2) { // D6 goes back
+    else if (btnIdx == 2) { // D6 (Back)
       triviaState = 0;
+      triviaNeedsUpdate = true;
       lcd.clear();
     }
   }
@@ -684,7 +704,7 @@ void loop() {
         return;
       }
       
-      if (triviaState == 0 || triviaState == 1 || triviaState == 2) {
+      if (triviaState == 0) {
         // Scroll Question on Top Row
         if (millis() - triviaScrollTime > 300) {
           triviaScrollTime = millis();
@@ -699,24 +719,32 @@ void loop() {
           }
         }
         
-        lcd.setCursor(0,1);
-        if (triviaState == 0 || triviaState == 1) {
-           String s = "A:"; s += (optionHidden[0] ? "   " : curQ.a);
-           s += " B:"; s += (optionHidden[1] ? "   " : curQ.b);
-           lcd.print(s.substring(0,16));
-        } else if (triviaState == 2) {
-           String s = "C:"; s += (optionHidden[2] ? "   " : curQ.c);
-           s += " D:"; s += (optionHidden[3] ? "   " : curQ.d);
-           lcd.print(s.substring(0,16));
+        if (triviaNeedsUpdate) {
+          lcd.setCursor(0,1);
+          String s = "> ";
+          s += (char)('A' + triviaOptCursor);
+          s += ": ";
+          if (triviaOptCursor == 0) s += curQ.a;
+          else if (triviaOptCursor == 1) s += curQ.b;
+          else if (triviaOptCursor == 2) s += curQ.c;
+          else if (triviaOptCursor == 3) s += curQ.d;
+          
+          lcd.print(s);
+          for(int i=s.length(); i<16; i++) lcd.print(" ");
+          triviaNeedsUpdate = false;
         }
       }
       else if (triviaState == 3) { // Lifeline Menu
-        loadLifelineChars();
-        lcd.setCursor(0,0); lcd.print(F("LIFELINES [D6]  "));
-        lcd.setCursor(0,1);
-        if (lifelineCursor==0) { lcd.write(1); lcd.print(lifelineUsed[0]?F(" Used"):F(" Phone     ")); }
-        if (lifelineCursor==1) { lcd.write(2); lcd.print(lifelineUsed[1]?F(" Used"):F(" Audience  ")); }
-        if (lifelineCursor==2) { lcd.write(3); lcd.print(lifelineUsed[2]?F(" Used"):F(" 50/50     ")); }
+        if (triviaNeedsUpdate) {
+          loadLifelineChars();
+          lcd.setCursor(0,0); lcd.print(F("LIFELINE (D6)   "));
+          lcd.setCursor(0,1);
+          lcd.print("> ");
+          if (lifelineCursor==0) { lcd.write(1); lcd.print(lifelineUsed[0]?F(" Used      "):F(" Phone     ")); }
+          if (lifelineCursor==1) { lcd.write(2); lcd.print(lifelineUsed[1]?F(" Used      "):F(" Audience  ")); }
+          if (lifelineCursor==2) { lcd.write(3); lcd.print(lifelineUsed[2]?F(" Used      "):F(" 50/50     ")); }
+          triviaNeedsUpdate = false;
+        }
       }
       else if (triviaState == 4 || triviaState == 5) {
         if (triviaState == 5) { // Show message from lifeline
